@@ -22,6 +22,7 @@ class Execution(Base):
     # 관계 설정
     workflow = relationship("Workflow", back_populates="executions")
     user = relationship("User", back_populates="executions")
+    assets = relationship("Asset", back_populates="execution", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Execution(id={self.id}, workflow_id={self.workflow_id}, status='{self.status}')>"

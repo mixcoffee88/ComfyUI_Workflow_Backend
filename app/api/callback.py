@@ -37,6 +37,10 @@ async def callback(
         
         print(f"✅ Found execution: {execution.id}, current status: {execution.status}")
         
+        # 기존 assets 확인
+        existing_assets = db.query(Asset).filter(Asset.execution_id == execution_id).all()
+        print(f"📋 Found {len(existing_assets)} existing assets for execution {execution_id}")
+        
         # request body가 없으면 기본값 설정
         if request is None:
             request = CallbackRequest(images=[])
@@ -47,16 +51,28 @@ async def callback(
         execution.completed_at = datetime.now()
         
         # assets 테이블에 이미지 URL들 삽입
+        assets_added = 0
         for image_url in request.images:
-            asset = Asset(
-                execution_id=execution_id,
-                image_url=image_url
-            )
-            db.add(asset)
-            print(f"📸 Added asset: {image_url}")
+            try:
+                asset = Asset(
+                    execution_id=execution_id,
+                    image_url=image_url
+                )
+                db.add(asset)
+                print(f"📸 Added asset: {image_url}")
+                assets_added += 1
+            except Exception as asset_error:
+                print(f"❌ Error adding asset {image_url}: {asset_error}")
+                raise
         
         # 변경사항 저장
-        db.commit()
+        try:
+            db.commit()
+            print(f"✅ Successfully committed {assets_added} assets to database")
+        except Exception as commit_error:
+            print(f"❌ Error committing to database: {commit_error}")
+            db.rollback()
+            raise
         
         print(f"✅ Successfully processed callback for execution {execution_id}")
         
@@ -64,7 +80,8 @@ async def callback(
             "status": "success",
             "message": f"Execution {execution_id} 완료 처리 및 {len(request.images)}개 이미지 저장 완료",
             "execution_id": execution_id,
-            "images_count": len(request.images)
+            "images_count": len(request.images),
+            "assets_added": assets_added
         }
         
     except HTTPException:
@@ -72,4 +89,7 @@ async def callback(
     except Exception as e:
         db.rollback()
         print(f"❌ Error in callback: {str(e)}")
+        print(f"❌ Error type: {type(e)}")
+        import traceback
+        print(f"❌ Error traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Callback 처리 중 오류 발생: {str(e)}") 
