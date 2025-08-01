@@ -23,7 +23,8 @@ class ComfyUIService:
         # 딕셔너리를 JSON 문자열로 변환 후 UUID 교체
         workflow_json_str = json.dumps(workflow_data, ensure_ascii=False)
         workflow_json_str = workflow_json_str.replace("[uuid]", client_id)
-        workflow_json_str = workflow_json_str.replace("[execution_id]", execution_id)
+        workflow_json_str = workflow_json_str.replace("[execution_id]", str(execution_id))
+        print(f"workflow_json_str : {workflow_json_str}")
         workflow_data = json.loads(workflow_json_str)
         
         # ComfyUI API에 프롬프트 전송
