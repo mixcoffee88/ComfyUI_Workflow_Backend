@@ -13,7 +13,7 @@ router = APIRouter()
 class CallbackRequest(BaseModel):
     images: List[str]
 
-@router.post("/callback/{execution_id}")
+@router.post("/{execution_id}")
 async def callback(
     execution_id: int = Path(..., description="실행 ID"),
     request: CallbackRequest = None,
@@ -25,11 +25,22 @@ async def callback(
     - execution_id: URL 경로로 받는 실행 ID
     - images: request body로 받는 이미지 URL 배열
     """
+    print(f"🔔 Callback received for execution_id: {execution_id}")
+    print(f"📦 Request body: {request}")
+    
     try:
         # execution_id로 실행 기록 조회
         execution = db.query(Execution).filter(Execution.id == execution_id).first()
         if not execution:
+            print(f"❌ Execution ID {execution_id} not found")
             raise HTTPException(status_code=404, detail=f"Execution ID {execution_id}를 찾을 수 없습니다.")
+        
+        print(f"✅ Found execution: {execution.id}, current status: {execution.status}")
+        
+        # request body가 없으면 기본값 설정
+        if request is None:
+            request = CallbackRequest(images=[])
+            print("⚠️ No request body provided, using empty images list")
         
         # executions 테이블의 status를 completed로 업데이트
         execution.status = "completed"
@@ -42,9 +53,12 @@ async def callback(
                 image_url=image_url
             )
             db.add(asset)
+            print(f"📸 Added asset: {image_url}")
         
         # 변경사항 저장
         db.commit()
+        
+        print(f"✅ Successfully processed callback for execution {execution_id}")
         
         return {
             "status": "success",
@@ -57,4 +71,5 @@ async def callback(
         raise
     except Exception as e:
         db.rollback()
+        print(f"❌ Error in callback: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Callback 처리 중 오류 발생: {str(e)}") 
