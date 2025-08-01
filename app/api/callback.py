@@ -52,7 +52,8 @@ async def callback(
         
         # assets 테이블에 이미지 URL들 삽입
         assets_added = 0
-        for image_url in request.images:
+        for image in request.images:
+            image_url = image.get("image")
             try:
                 asset = Asset(
                     execution_id=execution_id,

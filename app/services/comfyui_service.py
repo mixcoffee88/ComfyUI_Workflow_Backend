@@ -15,7 +15,7 @@ class ComfyUIService:
         self.ws_url = settings.COMFYUI_WS_URL
         self.today = datetime.today().strftime("%Y/%m/%d")
 
-    async def execute_workflow(self, workflow_id: int, workflow_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute_workflow(self, execution_id: int, workflow_data: Dict[str, Any]) -> Dict[str, Any]:
         """워크플로우를 실행하고 prompt_id를 반환"""
         client_id = str(uuid.uuid4())
         print(f"workflow_data : {workflow_data}")
@@ -23,6 +23,7 @@ class ComfyUIService:
         # 딕셔너리를 JSON 문자열로 변환 후 UUID 교체
         workflow_json_str = json.dumps(workflow_data, ensure_ascii=False)
         workflow_json_str = workflow_json_str.replace("[uuid]", client_id)
+        workflow_json_str = workflow_json_str.replace("[execution_id]", execution_id)
         workflow_data = json.loads(workflow_json_str)
         
         # ComfyUI API에 프롬프트 전송
@@ -40,7 +41,7 @@ class ComfyUIService:
             result = {
                 "status": "pending",
                 "prompt_id": prompt_id,
-                "workflow_id": workflow_id,
+                "execution_id": execution_id,
                 "message": "워크플로우 실행 요청하였습니다."
             }
             return result
