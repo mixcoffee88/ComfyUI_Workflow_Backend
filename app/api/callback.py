@@ -11,7 +11,7 @@ from app.models.asset import Asset
 router = APIRouter()
 
 class CallbackRequest(BaseModel):
-    images: List[str]
+    images: List[dict]
 
 @router.post("/{execution_id}")
 async def callback(
