@@ -1,7 +1,7 @@
 #!/bin/bash
 
 APP_NAME="ComfyUI_Workflow_Backend"
-APP_DIR="/c/workspace/create_iamge_project/ComfyUI_Workflow_Backend"
+APP_DIR="/home/ubuntu/ComfyUI_Workflow_Backend"
 VENV_DIR="$APP_DIR/.venv"
 PYTHON="$VENV_DIR/bin/python"
 UVICORN="$VENV_DIR/bin/uvicorn"
