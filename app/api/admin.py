@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import List, Optional
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from app.api.auth import get_current_user, get_password_hash
 from app.db.database import get_db
 from app.models.user import User
@@ -21,6 +22,7 @@ class UserManagement(BaseModel):
     created_at: datetime
 
 class UserUpdate(BaseModel):
+    username: Optional[str] = None
     role: Optional[str] = None
     is_approved: Optional[bool] = None
 
@@ -47,6 +49,10 @@ class ServerSettings(BaseModel):
     max_workflows_per_user: int = 50
     max_executions_per_hour: int = 100
 
+class PaginatedResponse(BaseModel):
+    data: List[dict]
+    pagination: dict
+
 # 관리자 권한 확인
 async def get_admin_user(current_user: User = Depends(get_current_user)):
     if current_user.role != "admin":
@@ -62,8 +68,8 @@ async def get_all_users(
     admin_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
-    """모든 사용자 조회 (관리자용)"""
-    users = db.query(User).all()
+    """모든 사용자 조회 (관리자용) - 등록일 기준 내림차순 정렬"""
+    users = db.query(User).order_by(User.created_at.desc()).all()
     return [UserManagement(
         id=user.id,
         username=user.username,
@@ -87,6 +93,18 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
     
     # 업데이트 적용
+    if user_update.username is not None:
+        # 사용자명 중복 체크
+        existing_user = db.query(User).filter(
+            User.username == user_update.username,
+            User.id != user_id
+        ).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already exists"
+            )
+        target_user.username = user_update.username
     if user_update.role is not None:
         target_user.role = user_update.role
     if user_update.is_approved is not None:
@@ -225,47 +243,84 @@ async def create_workflow_admin(
         }
     }
 
-@router.get("/workflows")
+@router.get("/workflows", response_model=PaginatedResponse)
 async def get_all_workflows_admin(
     admin_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="페이지 번호"),
+    page_size: int = Query(20, ge=1, le=100, description="페이지 크기"),
+    search: Optional[str] = Query(None, description="검색어"),
+    status: Optional[str] = Query(None, description="상태 필터")
 ):
-    """모든 워크플로우 조회 (관리자용)"""
-    workflows = (
-        db.query(Workflow, User.username)
-        .join(User, Workflow.user_id == User.id)
-        .all()
-    )
-    
-    result = []
-    for workflow, username in workflows:
-        # 실행 통계 계산
-        executions = db.query(Execution).filter(Execution.workflow_id == workflow.id).all()
-        total_executions = len(executions)
-        completed_executions = len([e for e in executions if e.status == "completed"])
-        success_rate = f"{(completed_executions / total_executions * 100):.1f}%" if total_executions > 0 else "0%"
-        last_executed = max([e.created_at for e in executions]) if executions else None
+    """모든 워크플로우 조회 (관리자용) - 페이지네이션 지원"""
+    try:
+        # 기본 쿼리
+        query = db.query(Workflow, User.username).join(User, Workflow.user_id == User.id)
         
-        result.append({
-            "id": workflow.id,
-            "name": workflow.name,
-            "description": workflow.description,
-            "workflow_data": workflow.workflow_data,
-            "input_fields": workflow.input_fields or {},
-            "status": workflow.status,
-            "user_id": workflow.user_id,
-            "username": username,
-            "owner": username,
-            "executions_count": total_executions,
-            "success_rate": success_rate,
-            "last_executed": last_executed,
-            "has_input_fields": bool(workflow.input_fields),
-            "input_fields_count": len(workflow.input_fields) if workflow.input_fields else 0,
-            "created_at": workflow.created_at,
-            "updated_at": workflow.updated_at
-        })
-    
-    return result
+        # 검색 필터
+        if search:
+            query = query.filter(
+                or_(
+                    Workflow.name.ilike(f"%{search}%"),
+                    Workflow.description.ilike(f"%{search}%"),
+                    User.username.ilike(f"%{search}%")
+                )
+            )
+        
+        # 상태 필터
+        if status:
+            query = query.filter(Workflow.status == status)
+        
+        # 전체 개수 계산
+        total_count = query.count()
+        
+        # 페이지네이션 적용
+        offset = (page - 1) * page_size
+        workflows = query.order_by(Workflow.created_at.desc()).offset(offset).limit(page_size).all()
+        
+        print(f"🔍 관리자 워크플로우 조회 - 페이지: {page}, 크기: {page_size}, 검색: {search}, 상태: {status}")
+        print(f"🔍 총 개수: {total_count}, 현재 페이지 개수: {len(workflows)}")
+        
+        result = []
+        for workflow, username in workflows:
+            # 실행 통계 계산
+            executions = db.query(Execution).filter(Execution.workflow_id == workflow.id).all()
+            total_executions = len(executions)
+            completed_executions = len([e for e in executions if e.status == "completed"])
+            success_rate = f"{(completed_executions / total_executions * 100):.1f}%" if total_executions > 0 else "0%"
+            last_executed = max([e.created_at for e in executions]) if executions else None
+            
+            result.append({
+                "id": workflow.id,
+                "name": workflow.name,
+                "description": workflow.description,
+                "workflow_data": workflow.workflow_data,
+                "input_fields": workflow.input_fields or {},
+                "status": workflow.status,
+                "user_id": workflow.user_id,
+                "username": username,
+                "owner": username,
+                "executions_count": total_executions,
+                "success_rate": success_rate,
+                "last_executed": last_executed,
+                "has_input_fields": bool(workflow.input_fields),
+                "input_fields_count": len(workflow.input_fields) if workflow.input_fields else 0,
+                "created_at": workflow.created_at,
+                "updated_at": workflow.updated_at
+            })
+        
+        return {
+            "data": result,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": (total_count + page_size - 1) // page_size
+            }
+        }
+    except Exception as e:
+        print(f"워크플로우 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail=f"워크플로우 조회 실패: {str(e)}")
 
 @router.put("/workflows/{workflow_id}")
 async def update_workflow_admin(
@@ -515,25 +570,81 @@ async def delete_workflow_admin(
     return {"message": "Workflow deleted successfully"}
 
 # 실행 기록 관리
-@router.get("/executions")
+@router.get("/executions", response_model=PaginatedResponse)
 async def get_all_executions_admin(
     admin_user: User = Depends(get_admin_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="페이지 번호"),
+    page_size: int = Query(20, ge=1, le=100, description="페이지 크기"),
+    search: Optional[str] = Query(None, description="검색어"),
+    status: Optional[str] = Query(None, description="상태 필터")
 ):
-    """모든 실행 기록 조회 (관리자용)"""
-    executions = db.query(Execution).all()
-    return [
-        {
-            "id": e.id,
-            "workflow_id": e.workflow_id,
-            "user_id": e.user_id,
-            "status": e.status,
-            "created_at": e.created_at,
-            "started_at": e.started_at,
-            "completed_at": e.completed_at
+    """모든 실행 기록 조회 (관리자용) - 페이지네이션 지원"""
+    try:
+        # 기본 쿼리
+        query = db.query(Execution).join(Workflow).join(User)
+        
+        # 검색 필터
+        if search:
+            query = query.filter(
+                or_(
+                    Workflow.name.ilike(f"%{search}%"),
+                    Workflow.description.ilike(f"%{search}%"),
+                    User.username.ilike(f"%{search}%")
+                )
+            )
+        
+        # 상태 필터
+        if status:
+            query = query.filter(Execution.status == status)
+        
+        # 전체 개수 계산
+        total_count = query.count()
+        
+        # 페이지네이션 적용
+        offset = (page - 1) * page_size
+        executions = query.order_by(Execution.created_at.desc()).offset(offset).limit(page_size).all()
+        
+        print(f"🔍 관리자 실행 기록 조회 - 페이지: {page}, 크기: {page_size}, 검색: {search}, 상태: {status}")
+        print(f"🔍 총 개수: {total_count}, 현재 페이지 개수: {len(executions)}")
+        
+        result = []
+        for execution in executions:
+            # 워크플로우 정보 가져오기
+            workflow = db.query(Workflow).filter(Workflow.id == execution.workflow_id).first()
+            workflow_name = workflow.name if workflow else "Unknown"
+            
+            # 사용자 정보 가져오기
+            user = db.query(User).filter(User.id == execution.user_id).first()
+            username = user.username if user else "Unknown"
+            
+            result.append({
+                "id": execution.id,
+                "workflow_id": execution.workflow_id,
+                "workflow_name": workflow_name,
+                "user_id": execution.user_id,
+                "username": username,
+                "status": execution.status,
+                "input_data": execution.input_data,
+                "started_at": execution.started_at,
+                "completed_at": execution.completed_at,
+                "comfyui_prompt_id": execution.comfyui_prompt_id,
+                "error_message": execution.error_message,
+                "created_at": execution.created_at
+            })
+        
+        return {
+            "data": result,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": (total_count + page_size - 1) // page_size
+            }
         }
-        for e in executions
-    ]
+    except Exception as e:
+        print(f"실행 기록 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail=f"실행 기록 조회 실패: {str(e)}")
 
 @router.delete("/executions/{execution_id}")
 async def delete_execution_admin(

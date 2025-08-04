@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine, text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.core.config import settings
 
@@ -12,7 +11,10 @@ engine = create_engine(
     pool_pre_ping=True,  # 연결 전 핑 테스트
     pool_recycle=3600,  # 1시간마다 연결 재생성
     pool_timeout=30,  # 연결 타임아웃
-    echo=False  # SQL 로그 출력 (개발 시 True)
+    echo=False,  # SQL 로그 출력 (개발 시 True)
+    connect_args={
+        "options": "-c search_path=public"  # 연결 시 search_path 설정
+    }
 )
 
 # 연결 후 스키마 설정
@@ -27,7 +29,10 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # 비동기 엔진 (필요한 경우)
 async_engine = create_async_engine(
-    settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+    settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
+    connect_args={
+        "options": "-c search_path=public"  # 연결 시 search_path 설정
+    }
 )
 AsyncSessionLocal = sessionmaker(
     async_engine, class_=AsyncSession, expire_on_commit=False
@@ -39,7 +44,7 @@ Base = declarative_base()
 def get_db() -> Session:
     db = SessionLocal()
     try:
-        # 스키마 설정
+        # 스키마 설정 (추가 보장)
         db.execute(text("SET search_path TO public"))
         db.commit()
         yield db
@@ -49,6 +54,9 @@ def get_db() -> Session:
 # 비동기 세션 의존성 (필요한 경우)
 async def get_async_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
+        # 스키마 설정 (추가 보장)
+        await session.execute(text("SET search_path TO public"))
+        await session.commit()
         yield session
 
 # 데이터베이스 초기화
@@ -65,7 +73,7 @@ async def init_db():
     print("✅ 데이터베이스 테이블이 생성되었습니다.")
     
     # 기본 관리자 계정 생성
-    await create_default_admin()
+    # await create_default_admin()
 
 async def create_default_admin():
     """기본 관리자 계정 생성"""

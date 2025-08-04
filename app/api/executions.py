@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
@@ -29,18 +30,48 @@ class ExecutionResponse(BaseModel):
     class Config:
         from_attributes = True
 
-@router.get("/my", response_model=List[ExecutionResponse])
+class PaginatedExecutionResponse(BaseModel):
+    data: List[ExecutionResponse]
+    pagination: dict
+
+@router.get("/my", response_model=PaginatedExecutionResponse)
 async def get_my_executions(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="페이지 번호"),
+    page_size: int = Query(20, ge=1, le=100, description="페이지 크기"),
+    search: Optional[str] = Query(None, description="검색어"),
+    status: Optional[str] = Query(None, description="상태 필터")
 ):
-    """현재 사용자의 실행 기록 조회"""
+    """현재 사용자의 실행 기록 조회 (페이지네이션 및 필터링 지원)"""
     try:
-        executions = db.query(Execution).filter(
-            Execution.user_id == current_user.id
-        ).order_by(Execution.started_at.desc()).all()
+        # 기본 쿼리
+        query = db.query(Execution).filter(Execution.user_id == current_user.id)
         
-        print(f"🔍 사용자 {current_user.id}의 실행 기록 개수: {len(executions)}")
+        # 검색 필터
+        if search:
+            # 워크플로우 이름이나 설명에서 검색
+            query = query.join(Workflow).filter(
+                or_(
+                    Workflow.name.ilike(f"%{search}%"),
+                    Workflow.description.ilike(f"%{search}%")
+                )
+            )
+        
+        # 상태 필터
+        if status:
+            query = query.filter(Execution.status == status)
+        
+        # 전체 개수 계산
+        total_count = query.count()
+        
+        # 페이지네이션 적용
+        offset = (page - 1) * page_size
+        executions = query.order_by(Execution.started_at.desc()).offset(offset).limit(page_size).all()
+        
+        print(f"🔍 사용자 {current_user.id}의 실행 기록 - 페이지: {page}, 크기: {page_size}, 검색: {search}, 상태: {status}")
+        print(f"🔍 총 개수: {total_count}, 현재 페이지 개수: {len(executions)}")
+        
         result = []
         for execution in executions:
             # 워크플로우 정보 가져오기
@@ -56,10 +87,8 @@ async def get_my_executions(
             # 에셋 정보 가져오기
             try:
                 assets = db.query(Asset).filter(Asset.execution_id == execution.id).all()
-                print(f"🔍 Execution {execution.id}의 assets 개수: {len(assets)}")
                 assets_data = []
                 for asset in assets:
-                    print(f"📸 Asset ID: {asset.id}, URL: {asset.image_url}")
                     assets_data.append({
                         "id": asset.id,
                         "image_url": asset.image_url,
@@ -83,10 +112,31 @@ async def get_my_executions(
             }
             result.append(execution_data)
         
-        return result
+        return {
+            "data": result,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": (total_count + page_size - 1) // page_size
+            }
+        }
     except Exception as e:
         print(f"실행 기록 조회 오류: {e}")
         raise HTTPException(status_code=500, detail=f"실행 기록 조회 실패: {str(e)}")
+
+@router.get("/count", response_model=dict)
+async def get_my_executions_count(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """현재 사용자의 실행 기록 개수 조회"""
+    try:
+        count = db.query(Execution).filter(Execution.user_id == current_user.id).count()
+        return {"count": count}
+    except Exception as e:
+        print(f"실행 기록 개수 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail=f"실행 기록 개수 조회 실패: {str(e)}")
 
 @router.get("/", response_model=List[ExecutionResponse])
 async def get_all_executions(

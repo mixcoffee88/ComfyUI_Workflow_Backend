@@ -47,9 +47,22 @@ def get_password_hash(password):
 
 def get_user(db: Session, username: str) -> Optional[User]:
     return db.query(User).filter(User.username == username).first()
+
+def get_user_by_email(db: Session, email: str) -> Optional[User]:
+    return db.query(User).filter(User.email == email).first()
     
 def authenticate_user(db: Session, username: str, password: str):
     user = get_user(db, username)
+    if not user:
+        return False
+    if not verify_password(password, user.hashed_password):
+        return False
+    if not user.is_active:
+        return False
+    return user
+
+def authenticate_user_by_email(db: Session, email: str, password: str):
+    user = get_user_by_email(db, email)
     if not user:
         return False
     if not verify_password(password, user.hashed_password):
@@ -89,15 +102,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 
 @router.post("/login", response_model=Token)
 async def login_for_access_token(
-    username: str = Form(...),
+    email: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    user = authenticate_user(db, username, password)
+    user = authenticate_user_by_email(db, email, password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -164,4 +177,29 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
         role=current_user.role,
         is_approved=current_user.is_approved,
         created_at=current_user.created_at
-    ) 
+    )
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+@router.post("/change-password")
+async def change_password(
+    password_data: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """비밀번호 변경"""
+    # 현재 비밀번호 확인
+    if not verify_password(password_data.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="현재 비밀번호가 올바르지 않습니다")
+    
+    # 새 비밀번호 해시화
+    new_hashed_password = get_password_hash(password_data.new_password)
+    
+    # 비밀번호 업데이트
+    current_user.hashed_password = new_hashed_password
+    db.commit()
+    db.refresh(current_user)
+    
+    return {"message": "비밀번호가 성공적으로 변경되었습니다"} 
