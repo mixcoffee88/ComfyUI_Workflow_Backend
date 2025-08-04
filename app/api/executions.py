@@ -40,6 +40,7 @@ async def get_my_executions(
             Execution.user_id == current_user.id
         ).order_by(Execution.started_at.desc()).all()
         
+        print(f"🔍 사용자 {current_user.id}의 실행 기록 개수: {len(executions)}")
         result = []
         for execution in executions:
             # 워크플로우 정보 가져오기
@@ -52,8 +53,21 @@ async def get_my_executions(
                     "description": workflow.description
                 }
             
-            # 에셋 정보는 임시로 빈 배열로 설정
-            assets_data = []
+            # 에셋 정보 가져오기
+            try:
+                assets = db.query(Asset).filter(Asset.execution_id == execution.id).all()
+                print(f"🔍 Execution {execution.id}의 assets 개수: {len(assets)}")
+                assets_data = []
+                for asset in assets:
+                    print(f"📸 Asset ID: {asset.id}, URL: {asset.image_url}")
+                    assets_data.append({
+                        "id": asset.id,
+                        "image_url": asset.image_url,
+                        "created_at": asset.created_at
+                    })
+            except Exception as asset_error:
+                print(f"❌ Assets 조회 오류 (Execution {execution.id}): {asset_error}")
+                assets_data = []
             
             execution_data = {
                 "id": execution.id,
@@ -100,8 +114,15 @@ async def get_all_executions(
                     "description": workflow.description
                 }
             
-            # 에셋 정보는 임시로 빈 배열로 설정
+            # 에셋 정보 가져오기
+            assets = db.query(Asset).filter(Asset.execution_id == execution.id).all()
             assets_data = []
+            for asset in assets:
+                assets_data.append({
+                    "id": asset.id,
+                    "image_url": asset.image_url,
+                    "created_at": asset.created_at
+                })
             
             execution_data = {
                 "id": execution.id,
@@ -148,8 +169,15 @@ async def get_execution(
                 "description": workflow.description
             }
         
-        # 에셋 정보는 임시로 빈 배열로 설정
+        # 에셋 정보 가져오기
+        assets = db.query(Asset).filter(Asset.execution_id == execution.id).all()
         assets_data = []
+        for asset in assets:
+            assets_data.append({
+                "id": asset.id,
+                "image_url": asset.image_url,
+                "created_at": asset.created_at
+            })
         
         execution_data = {
             "id": execution.id,
